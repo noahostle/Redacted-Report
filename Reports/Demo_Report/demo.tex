@@ -1,9 +1,7 @@
-
-
-
 \documentclass[]{article}
-\usepackage{amssymb}
-
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
 
 \title{Pre-signed redacted text signature verification via NIZKP}
 \author{Noah Ostle}
@@ -27,7 +25,7 @@
 \noindent Without revealing;
 \begin{itemize}
 	\item The redacted text, $w$\
-	\item The hash/signature of $M$, as doing so would allow an attacker to bruteforce guess $w$ by making a guess $w'$, and comparing the hash of $P | w'$ with the hash of $M$.\\
+	\item The hash/signature of $M$, as doing so would allow an attacker to bruteforce guess $w$ by making a guess $w'$, and comparing the hash of $P || w'$ with the hash of $M$.\\
 \end{itemize}
 
 
@@ -37,7 +35,7 @@ Let $H\;:\; \{0,1\}^* \to \{0,1\}^{256}$ be a 256-bit cryptographic hash functio
 
 Let $V\;:\;PK_a \times \{0,1\}^{256}\times \sigma_a(M) \to \{0,1\}$ be a signature verification algorithm, where $PK_a$ is Alice's public key, and $\sigma_a(M)$ is Alice's signature on message $M$. Eg. a RSA-PSS or PKCS signature.\\
 
-First, we let Alice's original message be $M$, and from it, decide what we want to publish; $P$, and what we want to redact; $w$.\\For example we may want to prove we solved a puzzle, but not reveal our answer;
+First, we let Alice's original message be $M$, and from it, decide what we want to publish; $P$, and what we want to redact; $w$.\\ For example we may want to prove we solved a puzzle, but not reveal our answer;
 
 \begin{quote}
 $M$ = Congratulations! Your answer 'Sup3R53cR3t3301!' was correct.
@@ -76,11 +74,211 @@ $$
 
 \end{quote}
 
-As you can see, the relation $R$ relies on the hashing function $H$, and the signature verification function $V$.\\In theory, we could choose any hashing algorithm and signature algorithm, but for this example we will use RSA PKCS \#1 v 1.5 and SHA256. \\If we can prove that these algorithms can be performed on a fixed input in polynomial time, then we can construct a satisfiable boolean circuit for use with ZK-SNARK machinery.\\ Firstly, we will take the example of a textbook RSA signature. RSA signature verification involves computing $\sigma^e \;\texttt{mod}\;n$ using modular exponentiation as specified in PKCS \#1 v2.2 (RFC 8017) \cite{pkcs}. The dominant cost is modular exponentiation on a k-bit modulus. With naive integer arithmetic, modular multiplication is $O(k^2)$ bit operations and square-and-multiply exponentiation uses $O(log\;e)$ such multiplications. Thus, when the public exponent e is fixed or bounded (as in best practice), RSA verification runs in $O(k^2)$; Additionally, SHA-256 runs in $O(n)$ as per NIST FIPS PUB 180-4 \cite{nist} \textbf{TODO: describe the ZKSNARK circuit design}
+As you can see, the relation $R$ relies on the hashing function $H$, and the signature verification function $V$. In theory, we could choose any hashing algorithm and signature algorithm. This is what allows the scheme to work with existing signature algorithms, so long as $V$ and $H$ can be encoded as a SAT circuit. Whether or not the proof generation and verification for a given $V$ and $H$ however, is not given - for this example we will use RSA PKCS \#1 v1.5 and SHA-256. If we can show that these algorithms can be evaluated on fixed-size inputs in polynomial time, then they admit a finite boolean or arithmetic circuit representation suitable for zk-SNARK proving. Firstly, we consider RSA verification. RSA signature verification involves computing $\sigma^e \bmod n$ using modular exponentiation as specified in PKCS \#1 v2.2 (RFC 8017) \cite{pkcs}. The dominant cost is modular exponentiation on a $k$-bit modulus. With schoolbook arithmetic, modular multiplication is $O(k^2)$ bit operations and square-and-multiply exponentiation uses $O(\log e)$ such multiplications. Thus, when the public exponent $e$ is fixed or bounded, as in standard practice with $e=65537$, verification remains polynomial in $k$. Likewise, SHA-256 processes the message in a linear number of compression-round operations relative to the padded input length, so for a fixed message length it is also polynomial-time and able to be encoded as a SAT circuit \cite{nist}.
+
+\section{zk-SNARK Circuit generated using Circom}
+The practical implementation in \texttt{zk\_attest.circom} instantiates this abstract relation as a fixed-size arithmetic circuit over a prime field. Circom is a specialized language + compiler framework designed for encoding algorithms into zk-SNARK circuits.\cite{circom_background}\\
+
+Using the Circom specification, we can set public inputs; \texttt{masked[256]} (the redacted text, up to 255 values for PoC), \texttt{modulus[32]} (commonly denoted $n$, the signers public key), and \texttt{exp[32]} (the public exponent, by default $e=65537$). Its private inputs are \texttt{msg[256]} and \texttt{sign[32]}. The notation reflects a byte-oriented encoding. The message is represented as 256 bytes, so the present prototype proves statements about a fixed 256-byte message domain. This fixed-width design is typical in early zk systems because it simplifies layout, padding, and constraint counting, although it can later be generalized by explicit length handling or chunked commitments.
+
+The first subcircuit enforces what the code comments call \emph{mask consistency}. For each byte position $i$, the circuit computes
+\[
+\texttt{diff}_i = \texttt{msg}_i - \texttt{masked}_i
+\]
+and constrains
+\[
+\texttt{diff}_i \cdot \texttt{masked}_i = 0.
+\]
+This simple multiplicative condition means that whenever a public masked byte is non-zero, the corresponding private message byte must equal it. If $\texttt{masked}_i \neq 0$, then the product can vanish only when $\texttt{diff}_i=0$, hence $\texttt{msg}_i=\texttt{masked}_i$. Conversely, if $\texttt{masked}_i=0$, the constraint imposes no equality on $\texttt{msg}_i$, so that position behaves as a redacted slot. Therefore the public masked message acts as a position-wise selector between revealed bytes and hidden bytes. This leads to an efficient algebraic model of redaction without introducing conditional branching which would blow up the circuit and increase computation required to generate and verify proofs.
+
+It is important to note that this PoC is based around 7-bit ascii, not raw data which may itself contain 0x00 bytes. A production version would normally separate the reveal pattern from the byte values by introducing an explicit public binary mask $b_i \in \{0,1\}$ and constraints such as
+\[
+b_i(\texttt{msg}_i-\texttt{pub}_i)=0,
+\]
+which avoids ambiguity between redaction and literal zero-valued data (but increases circuit complexity).\\
+
+The second subcircuit converts each private message byte into bits using stdlib \texttt{Num2Bits(8)}. This serves two purposes. First, it range-constrains every message byte to the interval $[0,255]$ which is the range used by 7-bit + 1 parity bit ascii. Second, it prepares the input in the exact format required by the SHA-256 gadget from \texttt{circomlib} (called $H$ in our theoretical model). Since \texttt{Num2Bits} outputs bits in little-endian order within each byte, while the SHA-256 implementation expects most-significant-bit-first ordering, the circuit explicitly reverses the per-byte bit order before feeding them into the hash component.\\
+
+This corresponds to our theoretical constraint $(h_M=H(P||w))$, but minimizes the circuit by first ensuring the visible parts of the redacted message match the secret full message, and then only computing the hash once, for the upcoming signature verification. This was an implementation decision to increase computational efficiency, and is a cryptographically equivalent claim to the theoretical model.\\
+
+
+Finally, the circuit invokes \texttt{RsaVerifyPkcs1v15()} from the helper library. Although the helper abstracts away the lower-level details, conceptually it proves that the supplied signature, modulus, exponent, and digest satisfy the PKCS \#1 v1.5 verification equation for an RSA modulus (in this case, the signers public key). This completes the linkage between hidden message reconstruction and public-key authenticity. The witness cannot satisfy the circuit unless the private message both matches the visible redaction pattern and hashes to a digest that is valid under Alice's public modulus and the given signature.\\
+
+This claim corresponds to the constraint $(V(PK_a, \; h_M,\;  \sigma_a(M))=1)$, ensuring that the signature verifies against the public key input and the secret calculated hash.
+
+With these two constraints, we have a circuit set up that can prove our relation: $$\exists (w, \; h_M, \; \sigma_a(M)) \;:\; (h_M=H(P||w)) \; \land \; (V(PK_a, \; h_M,\;  \sigma_a(M))=1)$$
+
+Now, we encode $PK_a$ (Alice's public key), and $P$ (the redacted message) as public inputs, and $M$ (the secret message), and $\sigma_a(M)$ (Alice's signature on M) as secret inputs which will be used by the prover to generate a witness. Provers can use their knowledge of $M$ and $\sigma_A(M)$ to generate a witness, and a public proof $\pi$ corresponding to a piece of redacted text, and verifiers, having access to the public key $PK_a$ and redacted message $P$, can verify this proof without gaining knowledge of the secret inputs.\\
+
+One of the strongest features of this architecture is that the signed object is the \emph{full original message}, not a pre-committed merkle leaf set or a purpose-built redactable signature primitive. This means the model is compatible with standard signatures generated by existing software, provided the verifier circuit can reproduce the same hash and verification semantics. In practical terms, a signer may sign an ordinary message in a conventional environment, and a later prover can generate a zero-knowledge attestation about a partial disclosure of that message without requiring the signer to use a specialized redaction-aware signing scheme at signing time.\\
+
+At the same time, the architecture is intentionally rigid in the current prototype. The message length is fixed, the reveal pattern is encoded through zero bytes, and the signature algorithm is fixed to RSA PKCS \#1 v1.5 with SHA-256 and exponent 65537. This rigidity is not a conceptual limitation of the broader idea, but rather an engineering simplification that keeps the initial circuit tractable. Generalizing the system would involve parameterized message lengths, explicit reveal masks, and alternative verification gadgets such as RSA-FDH, RSA-PSS, or ECDSA over compatible circuits. The theory remains the same, despite the fact that we only set out to prove this constrained version of our idea is possible.\\
 
 
 
+\section{Security Analysis}
 
+The security of the scheme relies on three main properties:
+
+\begin{enumerate}
+	\item Zero-knowledge of the proof system
+	\item Preimage resistance of the hash function
+	\item Existential unforgeability of the signature scheme
+\end{enumerate}
+
+We analyse each property rigorously.
+
+\subsection{Information Leakage}
+
+The verifier observes only the tuple
+
+$$
+(P,\;PK_a,\;\pi)
+$$
+
+The redacted text $w$, the message hash $h_M$, and the signature $\sigma$ remain hidden inside the witness.
+
+Under the zero-knowledge property of zk-SNARKs, the proof $\pi$ reveals no information about the witness beyond the validity of the relation:
+
+$$
+\exists (w,h_M,\sigma) : R((PK_a,P),(w,h_M,\sigma))=1
+$$
+
+Formally, there exists a simulator $\mathcal{S}$ such that
+
+$$
+\mathcal{S}(PK_a,P) \approx \pi
+$$
+
+without knowledge of the witness.
+
+Therefore the proof is computationally indistinguishable from simulated proofs.
+
+\subsection{Why the hash needs to be secret}
+
+An attacker knowing $h_m$ attempting to recover the redacted portion can bruteforce guess $w$.
+
+Suppose the redacted portion contains $k$ bits of entropy (which is definitely not the case for English text, but giving the benefit of doubt).
+
+A brute force attack requires computing
+
+$$
+H(P||w')
+$$
+
+for each candidate $w'$.
+
+The work factor is therefore
+
+$$
+2^k
+$$
+
+hash evaluations.
+
+For smaller redactions this poses an issue. For example, if the redacted text has entropy equivalent to a 48-bit secret (ie. 6 ascii letters):
+
+$$
+2^{48}
+$$
+
+operations.
+
+At a rate of $2^{26}$ hashes per second (realistic on higher end consumer hardware) \cite{se_challenge_response_2012}, the expected attack time is
+
+$$
+\frac{2^{48}}{2^{26}} = 4194304 \text{ seconds} \approx 48 \text{ days}
+$$
+
+Even with the naive bruteforce search this is not very long on a cryptographic scale. Therefore, if the hash $h_M$ were publicly revealed, this attack would become feasible because the attacker could directly test guesses.
+
+If we limit to the 95 ASCII printable characters only (ignoring that we could even just guess English words instead of each character!), then the entropy of the redacted bits dramatically decreases:
+
+$$
+95^n
+$$ 
+
+Where n is the number of letters. With our previous example of 6:
+
+$$
+\frac{95^{6}}{2^{26}} \approx 10953 \text{ seconds} \approx 3 \text{ hours}
+$$
+
+This is of course, assuming the attacker knows the length of the redacted portion (which would leak information in it's own way), but nevertheless from a cryptographic perspective hiding $h_M$ inside the zero-knowledge proof is essential for security.
+
+\subsection{Signature Forgery Resistance}
+
+The scheme inherits the security of the RSA signature scheme.
+
+Breaking the system by forging a valid witness would require generating a tuple
+
+$$
+(h_M,\sigma)
+$$
+
+such that
+
+$$
+\sigma^e \equiv EM(h_M) \pmod n
+$$
+
+without knowledge of the private key.
+
+Under the RSA assumption, computing such a signature is equivalent to solving the RSA inversion problem:
+
+$$
+\sigma = m^d \mod n
+$$
+
+where $d$ is the private exponent.
+
+For a 2048-bit modulus the best known classical attacks require approximately
+
+$$
+L_n[1/3,(64/9)^{1/3}]
+$$
+
+operations using the Number Field Sieve, which is computationally infeasible with current technology.
+
+\subsection{Soundness of the Proof}
+
+The zk-SNARK proof system guarantees soundness: a dishonest prover cannot convince the verifier of a false statement except with negligible probability.
+
+If the proof system has soundness error $\epsilon$, then
+
+$$
+Pr[\text{accept false statement}] \le \epsilon
+$$
+
+Typical systems achieve
+
+$$
+\epsilon \approx 2^{-128}
+$$
+
+which is equivalent to the security level of modern cryptographic primitives.
+
+\subsection{Overall Security Level}
+
+The effective security of the scheme is determined by the minimum of:
+
+\begin{itemize}
+	\item Hash preimage resistance (256 bits)
+	\item RSA security level ($\approxeq$112–128 bits for 2048-bit modulus)
+	\item zkSNARK soundness ($\approxeq$128 bits)
+\end{itemize}
+
+Thus the practical security level of the construction is approximately
+
+$$
+\approx 112\text{–}128 \text{ bits}
+$$
+
+assuming standard parameters.
+
+\subsection{Summary}
+
+The system reveals only the public message portion while cryptographically proving that the hidden text was part of a message legitimately signed by the original signer. The zero-knowledge proof prevents leakage of the hidden message, the hash function prevents brute-force recovery of the redacted portion, and the RSA signature guarantees authenticity. Under standard cryptographic assumptions, recovering the redacted content or forging a valid proof without the original signature requires computational effort well beyond current practical limits.
 
 \newpage
 \bibliographystyle{IEEEtran}
