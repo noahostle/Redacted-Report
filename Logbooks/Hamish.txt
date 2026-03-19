@@ -1,0 +1,87 @@
+12-3am 14/02
+Background research into popular zero-knowledge use cases and possibilities, along with concerns around the project idea.
+https://dl.acm.org/doi/10.1145/1029179.1029200
+https://github.com/facebook/opaque-ke
+Considered whether repudiability is feasible with the current project idea. Could we design it to be deniable after a time, e.g. by releasing some amount of information that allows anyone to generate a valid solution to a redacted text.
+
+7-9pm 26/02
+Meeting group mates for the first time. We discussed the project, roles, and the POC was demonstrated.
+I raised some questions, but answers will need to be researched and proved mathematically.
+
+12-12:30pm 27/02
+Meeting with supervisor. He seems satisfied so far with the project but noted a number of things that he wants to see more of:
+- We need to consider attacks on the scheme and show how they aren't an issue
+- It would be nice to have a mathematical proof that our project is correct, not just the demo that seems correct
+- The scope was good (yay!)
+
+1-5pm 27/02
+Background learning about the lean language for formal mathematical proofs via https://adam.math.hhu.de/#/g/leanprover-community/NNG4/
+Successfully built up from succ n = n+1 and reflective property of equals to prove associativity and commutativity of algebra.
+The above is not directly useful to the project, but an understanding of the syntax and processes around proving such things formally will be useful later on.
+
+6-7:30pm 27/02
+Review of demo code and associated encryption & hashing schemes.
+POC implements creation of proof of redacted text from any message signed with either RSA or Elliptic Curve DSA.
+Further work can be to implement support for other signing algorithms
+Brief read of zk-SNARK document: https://www.di.ens.fr/~nitulesc/files/Survey-SNARKs.pdf
+
+12-5pm 5/03
+Work on A2 plan document, specifically testing strategy section. Researched methods of formally verifying cryptographic code, discovered ProVerif and Tamarin. These could be used in combination with Lean to formally verify end-to-end our whole stack, but more importantly the primary relationship upon which our project relies. Thinking about attack vectors, and what attackers may try to do. Not all attacks will be against the cryptography which must be carefully considered!
+One attack I need to investigate is the length attack, where a redacted section of text could be guessed (but not verified) due to its length (along with context related to the message). Similar (in philosophy) attacks have recently been used to uncover redacted names in the epstein files, though that particular example uses variable width fonts and related analysis such as pixel artefacts to guess at unknown text.
+Even a completely redacted piece of text leaks information via its length:
+"masked_text_utf8": "***************",
+For example, a yes/no answer could be leaked via the redaction being two or three characters.
+
+
+12-1pm 12/03
+Meeting with group regarding the third assignment, mid-project review.
+Need to do comprehensive literature review
+Mentioned the length attack which was received well, and should be easily fixed
+Suggested that a UI would make redaction easier and less prone to issues, rather than using asterisk characters which do exist in normal documents
+
+
+2-5pm 16/03
+Literature review.
+The Right to Be Zero-Knowledge Forgotten - https://doi.org/10.1145/3664476.3669973
+First article discusses EU right to be forgotten, and difficulties in removing data from complex systems not designed for that. Perhaps our solution could be used to redact data in an authentic way?
+Towards Data Redaction in Bitcoin - https://doi.org/10.48550/arXiv.2305.10075
+Second article discusses Merkle trees, a known alternative solution but requires the data to be hashed in a particular format unlike our solution.
+
+
+1-4pm 19/03
+More literature review. Found new keyword: "redactable signature scheme" (RSS)
+
+All of the papers below are about taking some message, and using a specific known scheme to redact part of it in some way, with novel contributions to only allowing redaction of part of the message, or about the kinds of messages that can be redacted or how long it takes to redact.
+We are interested in redacting existing signed messages without the authors consent or knowledge necessary, through ZKPs. They are alternative technologies. I will need to find more papers focused on our area.
+
+https://eprint.iacr.org/2015/1059.pdf
+General framework for redacting messages without regard for framework or data structure. Mainly goes over mathematical constraints that must be satisfied and proves that if they are then it works. Could be used as a basis for proving our system?
+https://ui.adsabs.harvard.edu/abs/2022arXiv220209807T/abstract
+Allows redaction only once
+https://eprint.iacr.org/2020/1579.pdf
+For redacting images, has novel ideas due to the time complexity of large images being redacted
+
+https://www.iso.org/standard/78342.html
+ISO standard about redacting data. "allow the attestation to remain verifiable using the verification transformation and attest that non-redacted fields of the attested message are unmodified."
+
+https://arxiv.org/pdf/2202.09799
+Has a lot of math stuff. Does the technique by committing to a set. This addresses some issues with length, i.e. signature has linear signature size to number of elements in message. This architecture is a signing technique though, so it requires the message to be signed in this way.
+
+https://eprint.iacr.org/2002/016
+First proposed in 2002 under the name "Content Extraction Signature"
+
+https://scholarworks.merrimack.edu/cgi/viewcontent.cgi?article=1064&context=cs_facpub
+Novel contribution of the author allowing only certain parts of the text to be redacted
+
+------ZKPs------
+
+https://arxiv.org/pdf/2310.15934
+Notes the faster speed of ZKPs particularly using Groth16 SNARKs over other technologies. However, they raise concerns about the requirements of setting up the proof which can be somewhat mitigated with our project.
+
+https://eprint.iacr.org/2022/878.pdf
+zk-Creds, a system for identity proving using zkSnarks
+
+https://www.eurecom.fr/publication/5311/download/sec-publi-5311.pdf
+Basically our idea.
+They create a link between the original document and the redacted one using a set of places where the redaction occurred, where the redacted document only differs in places defined by that set.
+They also do a weird step where the document issuer appends a random value to the document to make the hash un-usable. I'm not sure why this is needed?
